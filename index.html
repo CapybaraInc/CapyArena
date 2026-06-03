@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>CapyArena Онлайн</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'Arial', sans-serif; touch-action: manipulation; overflow: hidden; user-select: none; }
+        #gameContainer { position: relative; width: 100%; max-width: 500px; aspect-ratio: 9/16; background: #2d5a27; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.7); overflow: hidden; }
+        canvas { display:block; width:100%; height:100%; border-radius:20px; }
+        #ui { position: absolute; top:10px; left:10px; right:10px; display: flex; justify-content: space-between; pointer-events: none; z-index:10; }
+        .ui-panel { background: rgba(0,0,0,0.7); color: white; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); }
+        #inventory { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; z-index: 10; }
+        .item-slot { width: 45px; height: 45px; background: rgba(0,0,0,0.7); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 22px; border: 2px solid rgba(255,255,255,0.3); backdrop-filter: blur(10px); color: white; transition: transform 0.1s; cursor: pointer; }
+        .item-slot:active { transform: scale(0.9); background: rgba(255,165,0,0.5); }
+        #leaderboard { position: absolute; top: 60px; right: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 10px; font-size: 11px; z-index: 10; max-height: 180px; overflow-y: auto; border: 1px solid #ffa500; display: none; pointer-events: auto; min-width: 120px; }
+        #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 25px; border-radius: 20px; text-align: center; color: white; z-index: 20; border: 2px solid #ffa500; width: 85%; max-width: 350px; }
+        #menu h1 { font-size: 24px; margin-bottom: 10px; color: #ffa500; }
+        #menu button { background: #ffa500; color: black; border: none; padding: 12px 30px; font-size: 16px; border-radius: 25px; font-weight: bold; cursor: pointer; margin: 8px; transition: transform 0.2s; width: 80%; }
+        #menu button:active { transform: scale(0.95); }
+        #matchmakingStatus { margin-top: 12px; color: #ddd; font-size: 13px; }
+        .progress-bar { width: 100%; height: 6px; background: #333; border-radius: 3px; margin: 8px 0; overflow: hidden; }
+        .progress-fill { height: 100%; background: #ffa500; border-radius: 3px; transition: width 0.3s; width: 0%; }
+        #roomIdDisplay { color: #ffa500; word-break: break-all; font-size: 12px; margin-top: 5px; }
+        .hidden { display: none !important; }
+        @media (max-width: 500px) { #gameContainer { border-radius: 0; max-width: 100%; } canvas { border-radius: 0; } }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui">
+            <div class="ui-panel" id="scoreDisplay">🍊 0</div>
+            <div class="ui-panel" id="levelDisplay">Ур. 1</div>
+            <div class="ui-panel" id="playersDisplay">👥 0/8</div>
+        </div>
+        <div id="inventory">
+            <div class="item-slot" id="slot1">🍊5</div>
+            <div class="item-slot" id="slot2">🛡️1</div>
+            <div class="item-slot" id="slot3">⚡1</div>
+            <div class="item-slot" id="slot4">💣1</div>
+        </div>
+        <div id="leaderboard">
+            <h4 style="margin-bottom:5px; text-align:center;">🏆 Лидеры</h4>
+            <div id="leaderboardList"></div>
+        </div>
+        <div id="menu">
+            <h1>🦫 CapyArena</h1>
+            <p style="margin-bottom:15px;">Мультиплеерная битва</p>
+            <button id="playOnlineBtn">🎮 Играть онлайн</button>
+            <button id="leaderboardBtn">🏆 Таблица лидеров</button>
+            <div id="matchmakingStatus" class="hidden">
+                <p>🔍 Поиск игроков...</p>
+                <div class="progress-bar"><div id="matchmakingProgress" class="progress-fill"></div></div>
+                <p id="roomIdDisplay"></p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue, update, push, serverTimestamp, onDisconnect, remove, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD0a8HDajmfCPKUglv1aLP9ToeYR5OTgyc",
+            authDomain: "capyarena-8dd87.firebaseapp.com",
+            projectId: "capyarena-8dd87",
+            storageBucket: "capyarena-8dd87.firebasestorage.app",
+            messagingSenderId: "681626996801",
+            appId: "1:681626996801:web:337a33a90b3ae7a2bef6c0",
+            databaseURL: "https://capyarena-8dd87-default-rtdb.firebaseio.com"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const database = getDatabase(app);
+        console.log('✅ Firebase подключён!');
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            const container = document.getElementById('gameContainer');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        const GameState = { MENU: 'menu', MATCHMAKING: 'matchmaking', PLAYING: 'playing', ENDED: 'ended' };
+        let gameState = GameState.MENU;
+        let players = new Map();
+        let localPlayerId = null;
+        let roomId = null;
+        let playerRef = null;
+        let collectibles = [];
+        let arena = null;
+        let updateInterval = null;
+
+        function generateId() { return Math.random().toString(36).substr(2, 9); }
+
+        class Player {
+            constructor(id, name, isLocal = false) {
+                this.id = id; this.name = name; this.x = Math.random()*(canvas.width-40)+20; this.y = Math.random()*(canvas.height-40)+20;
+                this.size = 28; this.speed = 2.5; this.level = 1; this.score = 0; this.health = 100; this.maxHealth = 100;
+                this.inventory = { oranges: 5, shield: 1, boost: 1, bomb: 1 };
+                this.shieldActive = false; this.shieldTimer = 0; this.boostActive = false; this.boostTimer = 0;
+                this.isLocal = isLocal; this.targetX = this.x; this.targetY = this.y;
+                this.color = ['#8B4513','#A0522D','#CD853F','#D2691E','#F4A460','#C49A3C'][Math.floor(Math.random()*6)];
+                this.alive = true; this.respawnTimer = 0; this.displayName = name;
+            }
+            update() {
+                if (!this.alive) { this.respawnTimer--; if (this.respawnTimer <= 0) this.respawn(); return; }
+                const dx = this.targetX - this.x, dy = this.targetY - this.y, dist = Math.sqrt(dx*dx+dy*dy);
+                if (dist > 3) { const spd = this.boostActive ? this.speed*2 : this.speed; this.x += (dx/dist)*Math.min(spd, dist); this.y += (dy/dist)*Math.min(spd, dist); }
+                this.x = Math.max(this.size, Math.min(canvas.width-this.size, this.x));
+                this.y = Math.max(this.size, Math.min(canvas.height-this.size, this.y));
+                if (this.shieldActive) { this.shieldTimer--; if (this.shieldTimer <= 0) this.shieldActive = false; }
+                if (this.boostActive) { this.boostTimer--; if (this.boostTimer <= 0) this.boostActive = false; }
+            }
+            respawn() { this.alive = true; this.health = this.maxHealth; this.x = Math.random()*(canvas.width-40)+20; this.y = Math.random()*(canvas.height-40)+20; }
+            takeDamage(amount) { if (this.shieldActive) amount *= 0.3; this.health -= amount; if (this.health <= 0) { this.health = 0; this.alive = false; this.respawnTimer = 180; return true; } return false; }
+            useItem(itemType) {
+                switch(itemType) {
+                    case 'orange': if (this.inventory.oranges > 0) { this.inventory.oranges--; return { type:'orange', damage:25+this.level*5 }; } break;
+                    case 'shield': if (this.inventory.shield > 0) { this.inventory.shield--; this.shieldActive = true; this.shieldTimer = 300; return { type:'shield' }; } break;
+                    case 'boost': if (this.inventory.boost > 0) { this.inventory.boost--; this.boostActive = true; this.boostTimer = 180; return { type:'boost' }; } break;
+                    case 'bomb': if (this.inventory.bomb > 0) { this.inventory.bomb--; return { type:'bomb', damage:50, radius:120 }; } break;
+                }
+                return null;
+            }
+            draw(ctx) {
+                if (!this.alive) return;
+                ctx.save(); ctx.translate(this.x, this.y);
+                ctx.fillStyle = this.color; ctx.beginPath(); ctx.ellipse(0,0, this.size, this.size*0.8, 0,0,Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(this.size*0.7, -this.size*0.2, this.size*0.4, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(this.size*0.8, -this.size*0.3, 4,0,Math.PI*2); ctx.fill();
+                ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(this.size*0.9, -this.size*0.3, 2,0,Math.PI*2); ctx.fill();
+                ctx.fillStyle='black'; ctx.beginPath(); ctx.arc(this.size*1.05, -this.size*0.15, 2,0,Math.PI*2); ctx.fill();
+                ctx.fillStyle=this.color; ctx.beginPath(); ctx.arc(this.size*0.55, -this.size*0.5, 5,0,Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(this.size*0.85, -this.size*0.5, 5,0,Math.PI*2); ctx.fill();
+                if (this.shieldActive) { ctx.strokeStyle='rgba(0,200,255,0.8)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,this.size+5,0,Math.PI*2); ctx.stroke(); }
+                if (this.boostActive) { ctx.fillStyle='rgba(255,255,0,0.3)'; ctx.beginPath(); ctx.arc(0,0,this.size+3,0,Math.PI*2); ctx.fill(); }
+                ctx.fillStyle='white'; ctx.font='bold 11px Arial'; ctx.textAlign='center';
+                ctx.fillText(this.displayName, 0, -this.size-18);
+                ctx.fillText(`Ур.${this.level}`, 0, -this.size-6);
+                const w = this.size*2;
+                ctx.fillStyle='#333'; ctx.fillRect(-w/2, -this.size-30, w, 5);
+                ctx.fillStyle='#4CAF50'; ctx.fillRect(-w/2, -this.size-30, w*(this.health/this.maxHealth), 5);
+                ctx.restore();
+            }
+        }
+
+        class Arena {
+            constructor(seed) { this.obstacles = []; this.generate(seed || Math.random()); }
+            generate(seed) {
+                let rng = seed; const random = () => { rng = (rng*9301+49297)%233280; return rng/233280; };
+                this.obstacles = [];
+                for (let i=0; i<8+Math.floor(random()*12); i++) {
+                    const w=40+random()*60, h=40+random()*60, x=random()*canvas.width, y=random()*canvas.height;
+                    if (Math.sqrt((x-canvas.width/2)**2+(y-canvas.height/2)**2)<150) continue;
+                    this.obstacles.push({x:x-w/2,y:y-h/2,w,h,color:`rgb(${100+random()*50},${50+random()*50},${20+random()*30})`});
+                }
+            }
+            draw(ctx) {
+                ctx.fillStyle='#3a7a2a'; ctx.fillRect(0,0,canvas.width,canvas.height);
+                for (let obs of this.obstacles) { ctx.fillStyle=obs.color; ctx.fillRect(obs.x,obs.y,obs.w,obs.h); }
+            }
+        }
+
+        class Collectible {
+            constructor(type,x,y) { this.type=type; this.x=x; this.y=y; this.size=13; this.collected=false; this.bob=Math.random()*Math.PI*2; }
+            update() { this.bob+=0.05; }
+            draw(ctx) {
+                if (this.collected) return;
+                const bobY=Math.sin(this.bob)*3;
+                ctx.save(); ctx.translate(this.x, this.y+bobY);
+                const emojis = { orange:'🍊', shield:'🛡️', boost:'⚡', bomb:'💣' };
+                ctx.font='20px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillText(emojis[this.type]||'🍊', 0, 0);
+                ctx.restore();
+            }
+        }
+
+        function spawnCollectibles() {
+            collectibles = [];
+            const types = ['orange','orange','orange','orange','shield','boost','bomb'];
+            for (let i=0; i<20; i++) collectibles.push(new Collectible(types[Math.floor(Math.random()*7)], Math.random()*(canvas.width-30)+15, Math.random()*(canvas.height-30)+15));
+        }
+
+        async function findOrCreateRoom() {
+            try {
+                const snapshot = await get(ref(database, 'rooms'));
+                const rooms = snapshot.val() || {};
+                let availableRoom = null;
+                for (let rid in rooms) {
+                    const r = rooms[rid];
+                    if (r.state === 'waiting' && r.players && Object.keys(r.players).length < 8) { availableRoom = rid; break; }
+                }
+                if (availableRoom) { joinRoom(availableRoom); }
+                else { createRoom(); }
+            } catch(e) { console.error(e); createRoom(); }
+        }
+
+        function createRoom() {
+            roomId = generateId(); localPlayerId = generateId();
+            const roomRef = ref(database, 'rooms/' + roomId);
+            set(roomRef, { state: 'waiting', arenaSeed: Math.random(), players: {} }).then(() => {
+                addLocalPlayer(); listenToRoom();
+                document.getElementById('roomIdDisplay').textContent = 'Комната: ' + roomId;
+                simulateProgress();
+            }).catch(e => { console.error(e); alert('Ошибка Firebase! Проверьте правила Realtime Database.'); });
+        }
+
+        function joinRoom(rid) {
+            roomId = rid; localPlayerId = generateId();
+            addLocalPlayer(); listenToRoom();
+            document.getElementById('roomIdDisplay').textContent = 'Комната: ' + rid;
+            simulateProgress();
+        }
+
+        function addLocalPlayer() {
+            playerRef = ref(database, `rooms/${roomId}/players/${localPlayerId}`);
+            set(playerRef, { name: '🦫 '+localPlayerId.substr(0,4), x:Math.random()*(canvas.width-40)+20, y:Math.random()*(canvas.height-40)+20, score:0, level:1, health:100, maxHealth:100, alive:true, color:'#D2691E' });
+            onDisconnect(playerRef).remove();
+        }
+
+        function listenToRoom() {
+            const roomRef = ref(database, 'rooms/' + roomId);
+            onValue(roomRef, (snapshot) => {
+                const data = snapshot.val();
+                if (!data) { if (gameState===GameState.PLAYING) { alert('Комната закрыта'); location.reload(); } return; }
+                if (data.state==='playing' && gameState!==GameState.PLAYING) startPlaying(data);
+                if (data.players) updatePlayers(data.players);
+                if (data.events) processEvents(data.events);
+                updateUIFromData(data);
+            });
+        }
+
+        function updatePlayers(playersData) {
+            for (let [id] of players) { if (!playersData[id] && id!==localPlayerId) players.delete(id); }
+            for (let id in playersData) {
+                if (id===localPlayerId) continue;
+                const d = playersData[id];
+                if (!players.has(id)) { const p=new Player(id, d.name, false); p.color=d.color||p.color; players.set(id, p); }
+                const p = players.get(id);
+                if (p) { p.x=d.x; p.y=d.y; p.score=d.score; p.level=d.level; p.health=d.health; p.maxHealth=d.maxHealth; p.alive=d.alive; p.displayName=d.name; }
+            }
+        }
+
+        function processEvents(events) {
+            for (let key in events) {
+                const evt = events[key];
+                if (evt.targetId===localPlayerId && !evt._processed) {
+                    const lp = players.get(localPlayerId);
+                    if (lp && lp.alive) lp.takeDamage(evt.damage||25);
+                    update(ref(database, `rooms/${roomId}/events/${key}`), { _processed: true });
+                }
+            }
+        }
+
+        function sendUpdate() {
+            if (!playerRef || !players.has(localPlayerId)) return;
+            const p = players.get(localPlayerId);
+            if (!p) return;
+            update(ref(database, `rooms/${roomId}/players/${localPlayerId}`), { x:Math.round(p.x), y:Math.round(p.y), score:p.score, level:p.level, health:Math.round(p.health), maxHealth:p.maxHealth, alive:p.alive });
+        }
+
+        function sendAttack(targetId, damage) {
+            const evRef = push(ref(database, `rooms/${roomId}/events`));
+            set(evRef, { from:localPlayerId, targetId, damage, timestamp: serverTimestamp() });
+        }
+
+        function startPlaying(roomData) {
+            gameState = GameState.PLAYING;
+            document.getElementById('menu').classList.add('hidden');
+            document.getElementById('leaderboard').style.display = 'block';
+            if (!players.has(localPlayerId)) {
+                const ld = roomData.players[localPlayerId];
+                if (ld) { const p=new Player(localPlayerId, ld.name, true); p.x=ld.x; p.y=ld.y; p.score=ld.score; p.level=ld.level; p.health=ld.health; p.maxHealth=ld.maxHealth; players.set(localPlayerId, p); }
+            }
+            arena = new Arena(roomData.arenaSeed);
+            spawnCollectibles();
+            if (updateInterval) clearInterval(updateInterval);
+            updateInterval = setInterval(sendUpdate, 80);
+            setTimeout(() => { if (gameState===GameState.MATCHMAKING) { const ref2 = ref(database, 'rooms/'+roomId); get(ref2).then(s=>{ const d=s.val(); if (d&&d.players&&Object.keys(d.players).length>=2&&d.state==='waiting') update(ref2,{state:'playing'}); }); } }, 10000);
+        }
+
+        function updateUIFromData(data) {
+            const count = data.players ? Object.keys(data.players).length : 0;
+            document.getElementById('playersDisplay').textContent = `👥 ${count}/8`;
+            const list = document.getElementById('leaderboardList');
+            list.innerHTML = '';
+            const sorted = Object.values(data.players||{}).sort((a,b)=>b.score-a.score);
+            sorted.slice(0,5).forEach((p,i)=>{ const d=document.createElement('div'); d.style.padding='2px 0'; d.textContent=`${i+1}. ${p.name} - ${p.score}`; if (p.id===localPlayerId) d.style.color='#ffa500'; list.appendChild(d); });
+        }
+
+        function simulateProgress() {
+            let prog=0; const bar=document.getElementById('matchmakingProgress');
+            const t=setInterval(()=>{ prog+=Math.random()*12; if(prog>=100||gameState!==GameState.MATCHMAKING){clearInterval(t); if(gameState===GameState.MATCHMAKING)bar.style.width='100%';}else bar.style.width=prog+'%'; },400);
+        }
+
+        function useItem(type) {
+            if (gameState!==GameState.PLAYING || !players.has(localPlayerId)) return;
+            const p = players.get(localPlayerId);
+            if (!p || !p.alive) return;
+            const result = p.useItem(type);
+            if (!result) return;
+            if (result.type==='orange' || result.type==='bomb') {
+                let target=null, minDist=result.type==='bomb'?result.radius:70;
+                for (let [id,en] of players) {
+                    if (id===localPlayerId || !en.alive) continue;
+                    const dist=Math.sqrt((en.x-p.x)**2+(en.y-p.y)**2);
+                    if (dist<minDist) { minDist=dist; target=en; }
+                }
+                if (target) {
+                    sendAttack(target.id, result.damage);
+                    if (target.takeDamage(result.damage)) { p.score+=(result.type==='bomb'?150:100); if (p.score>=p.level*200) { p.level++; p.speed+=0.4; p.maxHealth+=20; p.health=p.maxHealth; p.inventory.oranges+=3; } }
+                }
+            }
+            updateInvUI(p);
+        }
+
+        function updateInvUI(p) {
+            document.getElementById('slot1').textContent = `🍊${p.inventory.oranges}`;
+            document.getElementById('slot2').textContent = `🛡️${p.inventory.shield}`;
+            document.getElementById('slot3').textContent = `⚡${p.inventory.boost}`;
+            document.getElementById('slot4').textContent = `💣${p.inventory.bomb}`;
+        }
+
+        function collectItems() {
+            if (!players.has(localPlayerId)) return;
+            const p = players.get(localPlayerId);
+            if (!p) return;
+            for (let col of collectibles) {
+                if (col.collected) continue;
+                if (Math.sqrt((p.x-col.x)**2+(p.y-col.y)**2) < p.size+col.size) {
+                    col.collected=true;
+                    switch(col.type) { case 'orange':p.score+=10;p.inventory.oranges++;break; case 'shield':p.inventory.shield++;break; case 'boost':p.inventory.boost++;break; case 'bomb':p.inventory.bomb++;break; }
+                    if (p.score>=p.level*200) { p.level++; p.speed+=0.4; p.maxHealth+=20; p.health=p.maxHealth; p.inventory.oranges+=3; }
+                    updateInvUI(p);
+                }
+            }
+            collectibles = collectibles.filter(c=>!c.collected);
+            const types = ['orange','orange','orange','orange','shield','boost','bomb'];
+            while (collectibles.length<18) collectibles.push(new Collectible(types[Math.floor(Math.random()*7)], Math.random()*(canvas.width-30)+15, Math.random()*(canvas.height-30)+15));
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            if (gameState===GameState.PLAYING && arena) {
+                arena.draw(ctx);
+                for (let col of collectibles) { col.update(); col.draw(ctx); }
+                for (let [,p] of players) { p.update(); p.draw(ctx); }
+                collectItems();
+                const lp = players.get(localPlayerId);
+                if (lp) { document.getElementById('scoreDisplay').textContent=`🍊 ${lp.score}`; document.getElementById('levelDisplay').textContent=`Ур. ${lp.level}`; }
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        canvas.addEventListener('touchstart', e => { e.preventDefault(); if (gameState!==GameState.PLAYING||!players.has(localPlayerId)) return; const t=e.touches[0], r=canvas.getBoundingClientRect(); const p=players.get(localPlayerId); if(p&&p.alive){ p.targetX=(t.clientX-r.left)*(canvas.width/r.width); p.targetY=(t.clientY-r.top)*(canvas.height/r.height); } });
+        canvas.addEventListener('touchmove', e => { e.preventDefault(); if (gameState!==GameState.PLAYING||!players.has(localPlayerId)) return; const t=e.touches[0], r=canvas.getBoundingClientRect(); const p=players.get(localPlayerId); if(p&&p.alive){ p.targetX=(t.clientX-r.left)*(canvas.width/r.width); p.targetY=(t.clientY-r.top)*(canvas.height/r.height); } });
+
+        document.getElementById('slot1').addEventListener('click', () => useItem('orange'));
+        document.getElementById('slot2').addEventListener('click', () => useItem('shield'));
+        document.getElementById('slot3').addEventListener('click', () => useItem('boost'));
+        document.getElementById('slot4').addEventListener('click', () => useItem('bomb'));
+
+        document.getElementById('playOnlineBtn').addEventListener('click', () => {
+            gameState = GameState.MATCHMAKING;
+            document.getElementById('matchmakingStatus').classList.remove('hidden');
+            document.getElementById('matchmakingProgress').style.width = '0%';
+            document.getElementById('roomIdDisplay').textContent = '';
+            findOrCreateRoom();
+        });
+
+        document.getElementById('leaderboardBtn').addEventListener('click', () => {
+            const lb = document.getElementById('leaderboard');
+            lb.style.display = lb.style.display==='block'?'none':'block';
+        });
+
+        gameLoop();
+        console.log('🦫 CapyArena готова! Жми "Играть онлайн"');
+    </script>
+</body>
+</html>
